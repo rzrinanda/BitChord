@@ -1215,7 +1215,8 @@ struct SearchView: View {
     /// One addon search row: sleeve, title, the tier the source offered, and the
     /// artist. Tapping plays it; the engine resolves its `src:` key.
     private func addonRow(_ hit: SearchHitDTO, index: Int) -> some View {
-        HStack(spacing: 12) {
+        let entry = hit.asEntry()
+        return HStack(spacing: 12) {
             ArtworkView(url: hit.thumbnailUrl, data: nil, side: 44)
                 .clipShape(.rect(cornerRadius: 6, style: .continuous))
             VStack(alignment: .leading, spacing: 3) {
@@ -1245,6 +1246,18 @@ struct SearchView: View {
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
+            #if os(iOS)
+            Menu {
+                SongActionButtons(entry: entry)
+            } label: {
+                Image(systemName: "ellipsis")
+                    .scaledFont(size: 15, weight: .regular)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 32, height: 32)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            #endif
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
@@ -1254,6 +1267,31 @@ struct SearchView: View {
             // go — the same context the YouTube song rows use.
             controller.play(addonHits.map { $0.asEntry() }, at: index, context: "Search")
         }
+        .songContextMenu(entry)
+        #if os(iOS)
+        .swipeActions(edge: .leading) {
+            Button {
+                controller.playRadio(entry)
+            } label: {
+                Label("Radio", systemImage: "dot.radiowaves.left.and.right")
+            }
+            .tint(.accentColor)
+        }
+        .swipeActions(edge: .trailing) {
+            Button {
+                controller.addToQueue(entry)
+            } label: {
+                Label("Queue", systemImage: "text.line.last.and.arrow.triangle.forward")
+            }
+            .tint(.blue)
+            Button {
+                controller.playNext(entry)
+            } label: {
+                Label("Play Next", systemImage: "text.line.first.and.arrow.triangle.forward")
+            }
+            .tint(.indigo)
+        }
+        #endif
         .accessibilityAddTraits(.isButton)
         .searchRowChrome()
     }

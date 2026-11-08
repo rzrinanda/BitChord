@@ -106,6 +106,7 @@ extension PlaybackController {
 
     func youtubeVideoID(for entry: QueueEntry) -> String? {
         if entry.source.hasPrefix("yt:") { return entry.videoId }
+        if let cached = resolvedRadioVideoIds[entry.id] { return cached }
         return entry.isLocal ? DownloadStore.shared.selectedYouTubeVideoId(for: entry.source) : nil
     }
 

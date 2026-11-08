@@ -149,6 +149,7 @@ final class PlaybackController {
     var recoveringEntryID: String?
     var recoveryNeedsFreshResolution = false
     var sourceDecisionNotes: [String: String] = [:]
+    var resolvedRadioVideoIds: [String: String] = [:]
     @ObservationIgnored var streamRecovery = PlaybackRecoveryPolicy()
     @ObservationIgnored var pendingPlaybackLatency: PlaybackLatencySample?
     @ObservationIgnored var nextPreparationTask: Task<Void, Never>?

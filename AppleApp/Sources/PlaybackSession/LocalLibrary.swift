@@ -42,34 +42,86 @@ final class LocalLibrary {
     @ObservationIgnored private var tracksByPath: [String: LocalTrack]?
     @ObservationIgnored private var visibleTracksCache: (sort: LocalMusicSort, query: String, tracks: [LocalTrack])?
     private(set) var scanned = false
+    private(set) var isScanning = false
     var onChange: (() -> Void)?
 
     private var scanTask: Task<Void, Never>?
     private var scanID = UUID()
     private var securityURL: URL?
 
-    /// Restores the persisted bookmark and rescans. BITCHORD_LIBRARY_PATH is
-    /// a dev-only override so automated UI tests can seed the library without
-    /// driving the modal open panel.
-    func restore() {
+    /// Default directories to search for local music.
+    static func defaultSearchFolders() -> [URL] {
+        var folders: [URL] = []
+        let fm = FileManager.default
+        #if os(macOS)
+        if let musicDir = fm.urls(for: .musicDirectory, in: .userDomainMask).first,
+           fm.fileExists(atPath: musicDir.path) {
+            folders.append(musicDir)
+        }
+        if let docDir = fm.urls(for: .documentDirectory, in: .userDomainMask).first,
+           fm.fileExists(atPath: docDir.path) {
+            folders.append(docDir)
+        }
+        #else
+        if let docDir = fm.urls(for: .documentDirectory, in: .userDomainMask).first,
+           fm.fileExists(atPath: docDir.path) {
+            folders.append(docDir)
+            let musicSub = docDir.appendingPathComponent("Music", isDirectory: true)
+            if fm.fileExists(atPath: musicSub.path) { folders.append(musicSub) }
+            let downloadsSub = docDir.appendingPathComponent("Downloads", isDirectory: true)
+            if fm.fileExists(atPath: downloadsSub.path) { folders.append(downloadsSub) }
+        }
+        #endif
+        return folders
+    }
+
+    private func storedFolderURL() -> URL? {
         if let override = ProcessInfo.processInfo.environment["BITCHORD_LIBRARY_PATH"],
            !override.isEmpty {
-            scan(folder: URL(fileURLWithPath: override))
-            return
+            return URL(fileURLWithPath: override)
         }
         let stored = PlatformSettings.shared.getString(key: "local_library_path", default: "")
-        guard !stored.isEmpty, let data = Data(base64Encoded: stored) else { return }
+        guard !stored.isEmpty, let data = Data(base64Encoded: stored) else { return nil }
         var stale = false
         guard let url = try? URL(resolvingBookmarkData: data,
                                 options: [],
                                 relativeTo: nil,
-                                bookmarkDataIsStale: &stale) else { return }
+                                bookmarkDataIsStale: &stale) else { return nil }
         _ = url.startAccessingSecurityScopedResource()
         securityURL = url
-        scan(folder: url)
+        return url
     }
 
-    /// Prompts for a folder, persists a bookmark, scans.
+    /// All folders that should be searched for local audio files.
+    func localSearchFolders() -> [URL] {
+        var targets = Self.defaultSearchFolders()
+        if let stored = storedFolderURL() {
+            if !targets.contains(where: { $0.standardizedFileURL.path == stored.standardizedFileURL.path }) {
+                targets.insert(stored, at: 0)
+            }
+        }
+        return targets
+    }
+
+    /// Automatically scans default local storage and any persisted bookmarked folder.
+    func restore() {
+        let folders = localSearchFolders()
+        scan(folders: folders)
+    }
+
+    /// Re-scans all local storage folders.
+    func rescan() async {
+        let folders = localSearchFolders()
+        scan(folders: folders)
+        await waitForScan()
+    }
+
+    func scanLocalStorage() {
+        let folders = localSearchFolders()
+        scan(folders: folders)
+    }
+
+    /// Prompts for a custom folder, persists a bookmark, and scans.
     func chooseFolder() {
 #if os(macOS)
         let panel = NSOpenPanel()
@@ -78,12 +130,7 @@ final class LocalLibrary {
         panel.allowsMultipleSelection = false
         panel.message = "Choose the folder holding your music library"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        _ = url.startAccessingSecurityScopedResource()
-        securityURL = url
-        if let bookmark = try? url.bookmarkData() {
-            AppSettings.shared.setLocalLibraryPath(value: bookmark.base64EncodedString())
-        }
-        scan(folder: url)
+        scanPicked(url)
 #else
         pickingPlaceholder()
 #endif
@@ -95,42 +142,59 @@ final class LocalLibrary {
         if let bookmark = try? url.bookmarkData() {
             AppSettings.shared.setLocalLibraryPath(value: bookmark.base64EncodedString())
         }
-        scan(folder: url)
+        var folders = localSearchFolders()
+        if !folders.contains(where: { $0.standardizedFileURL.path == url.standardizedFileURL.path }) {
+            folders.insert(url, at: 0)
+        }
+        scan(folders: folders)
     }
 
     #if os(iOS)
     private func pickingPlaceholder() {}
     #endif
 
-    private func scan(folder: URL) {
+    private func scan(folders: [URL]) {
         scanTask?.cancel()
         let id = UUID(); scanID = id
-        let work = Task.detached(priority: .utility) { Self.readTracks(folder: folder) }
+        isScanning = true
+        let work = Task.detached(priority: .utility) { Self.readTracks(folders: folders) }
         scanTask = Task {
             let result = await withTaskCancellationHandler { await work.value } onCancel: { work.cancel() }
             guard scanID == id, !Task.isCancelled else { return }
-            tracks = result; scanned = true; onChange?()
+            tracks = result
+            scanned = true
+            isScanning = false
+            onChange?()
         }
     }
 
     func waitForScan() async { await scanTask?.value }
 
-    nonisolated private static func readTracks(folder: URL) -> [LocalTrack] {
+    nonisolated private static func readTracks(folders: [URL]) -> [LocalTrack] {
         let fm = FileManager.default
         let keys: [URLResourceKey] = [.isRegularFileKey]
-        guard let enumerator = fm.enumerator(at: folder,
-                                             includingPropertiesForKeys: keys,
-                                             options: [.skipsHiddenFiles, .skipsPackageDescendants]) else {
-            return []
-        }
-        let audioPaths = enumerator
-            .compactMap { $0 as? URL }
-            .filter { url in
-                let ext = url.pathExtension.lowercased()
-                return ["mp3", "flac", "m4a", "mp4", "aac", "ogg", "opus", "wav", "aiff", "aif", "webm"]
-                    .contains(ext)
+        let validExtensions: Set<String> = ["mp3", "flac", "m4a", "mp4", "aac", "ogg", "opus", "wav", "aiff", "aif", "webm"]
+        var audioPaths: [String] = []
+        var seenPaths: Set<String> = []
+
+        for folder in folders {
+            if Task.isCancelled { return [] }
+            guard let enumerator = fm.enumerator(at: folder,
+                                                 includingPropertiesForKeys: keys,
+                                                 options: [.skipsHiddenFiles, .skipsPackageDescendants]) else {
+                continue
             }
-            .map(\.path)
+            for case let fileURL as URL in enumerator {
+                if Task.isCancelled { return [] }
+                let ext = fileURL.pathExtension.lowercased()
+                if validExtensions.contains(ext) {
+                    let path = fileURL.path
+                    if seenPaths.insert(path).inserted {
+                        audioPaths.append(path)
+                    }
+                }
+            }
+        }
 
         var found: [LocalTrack] = []
         for path in audioPaths {
@@ -166,11 +230,7 @@ final class LocalLibrary {
                 ))
             }
         }
-        // No ordering here. The scan's job is to find the files; the order they are
-        // shown in is the sort menu's, and sorting twice meant two different
-        // answers to "what order is this" depending on which one you had looked at.
-        // Alphabetical by path keeps the list stable between scans, which is what
-        // the ordering's tie-breakers assume.
+        // Alphabetical by path keeps the list stable between scans
         return found.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
     }
 

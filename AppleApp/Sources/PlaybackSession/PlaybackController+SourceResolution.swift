@@ -154,6 +154,20 @@ extension PlaybackController {
                     leftover: nil, decisionNote: report.explanation
                 )
             }
+            // Fallback to YouTube if the add-on source had no stream
+            if let matchedVideoId = await matchYouTubeVideoId(title: entry.title, artist: entry.artist, durationSeconds: entry.durationSeconds) {
+                PlaybackDebugLog.shared.record("addon stream unavailable for '\(entry.title)'; falling back to YouTube (\(matchedVideoId))", about: entry.id)
+                do {
+                    let source = try await resolveYouTube(videoId: matchedVideoId, prefs: prefs)
+                    await latencyResolved?(source.resolutionAt ?? ProcessInfo.processInfo.systemUptime, "cold", "YouTube fallback")
+                    return ResolveOutcome(
+                        source: source, leftover: nil,
+                        decisionNote: "The selected add-on source was unavailable; fell back to YouTube."
+                    )
+                } catch {
+                    PlaybackDebugLog.shared.record("YouTube fallback also failed: \(error)", about: matchedVideoId)
+                }
+            }
             throw InnertubeStreamResolver.StreamError(message: "That source had no stream")
         }
         #if DEBUG

@@ -100,7 +100,7 @@ struct LibraryLandingView: View {
 
                     OnDeviceCard(
                         title: "Local Music",
-                        subtitle: local.scanned ? "\(local.tracks.count) song\(local.tracks.count == 1 ? "" : "s")" : "Choose folder",
+                        subtitle: local.isScanning ? "Scanning…" : (local.scanned ? "\(local.tracks.count) song\(local.tracks.count == 1 ? "" : "s")" : "Tap to scan"),
                         systemImage: "folder.fill",
                         tintColor: .indigo,
                         destination: LocalMusicView(onPickFolder: onPickFolder)

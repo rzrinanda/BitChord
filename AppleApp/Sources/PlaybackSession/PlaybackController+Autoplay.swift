@@ -28,7 +28,20 @@ extension PlaybackController {
         ))
         guard due else { return }
         guard let context = recommendationContext else {
-            if autoplayEnabled {
+            if autoplayEnabled, let cur = current, state != .stopped {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    if let vid = await self.resolveYouTubeVideoId(for: cur) {
+                        PlaybackDebugLog.shared.record("autoplay: resolved YouTube seed \(vid) for '\(cur.title)'", about: cur.id)
+                        self.maybeAutoplay(force: force, lowWaterRefill: lowWaterRefill)
+                    } else {
+                        PlaybackDebugLog.shared.record(
+                            "autoplay: no context (repeatAll=\(self.repeatMode == .all) state=\(self.state) youtube=false)",
+                            about: cur.id
+                        )
+                    }
+                }
+            } else if autoplayEnabled {
                 PlaybackDebugLog.shared.record(
                     "autoplay: no context (repeatAll=\(repeatMode == .all) state=\(state) youtube=\(current.flatMap { youtubeVideoID(for: $0) } != nil))",
                     about: current?.id
@@ -112,6 +125,43 @@ extension PlaybackController {
         if let recommendationFetchOverride { recommendationFetchOverride(videoId, response); return }
         #endif
         AutoPlayBridge.shared.related(videoId: videoId, callback: AutoPlayAdapter(response))
+    }
+
+    /// Resolves canonical YouTube video ID for non-YouTube tracks so they can seed radio and fallback to YouTube.
+    func resolveYouTubeVideoId(for entry: QueueEntry) async -> String? {
+        if entry.source.hasPrefix("yt:") { return entry.videoId }
+        if let cached = resolvedRadioVideoIds[entry.id] { return cached }
+        if entry.isLocal, let localVid = DownloadStore.shared.selectedYouTubeVideoId(for: entry.source) {
+            resolvedRadioVideoIds[entry.id] = localVid
+            return localVid
+        }
+        if let vid = await Self.matchYouTubeVideoId(title: entry.title, artist: entry.artist, durationSeconds: entry.durationSeconds) {
+            resolvedRadioVideoIds[entry.id] = vid
+            return vid
+        }
+        return nil
+    }
+
+    static func matchYouTubeVideoId(title: String, artist: String, durationSeconds: Double) async -> String? {
+        let query = "\(title) \(artist)".trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return nil }
+        do {
+            let hits = try await InnertubeSearch.shared.search(query, scope: "SONG")
+            let tracks = hits.filter { $0.isTrack && $0.videoId != nil }
+            let matched: SearchHitDTO?
+            if durationSeconds > 0 {
+                matched = tracks.first(where: { hit in
+                    guard let durText = hit.durationText,
+                          let dur = QueueEntry.seconds(fromDurationText: durText) else { return false }
+                    return abs(dur - durationSeconds) <= 5
+                }) ?? tracks.first
+            } else {
+                matched = tracks.first
+            }
+            return matched?.videoId
+        } catch {
+            return nil
+        }
     }
 
     func tasteScores(_ entries: [QueueEntry], transitionFits: [Int: Double] = [:]) -> [Double] {

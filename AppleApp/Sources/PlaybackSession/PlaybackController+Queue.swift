@@ -491,7 +491,8 @@ extension PlaybackController {
 
     /// Upstream `playRadio`: seed plus related mix via `next` + QueueBuilder.
     func playRadio(_ entry: QueueEntry, context: String? = nil) {
-        play([entry], at: 0, context: context)
+        autoplayEnabled = true
+        play([entry], at: 0, context: context ?? "Radio")
     }
 
     /// SwiftUI `onMove` entry: destination is the pre-remove insertion index.

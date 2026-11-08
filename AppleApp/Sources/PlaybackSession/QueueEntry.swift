@@ -47,6 +47,7 @@ struct QueueEntry: Identifiable, Hashable, Sendable, Codable {
     var videoId: String? {
         if source.hasPrefix("yt:") { return String(source.dropFirst(3)) }
         if isLocal { return nil }
+        if source.hasPrefix("src:") || source.hasPrefix("saavn:") { return nil }
         return id
     }
 

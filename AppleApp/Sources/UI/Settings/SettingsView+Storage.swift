@@ -27,6 +27,27 @@ extension SettingsView {
             }
             .buttonStyle(.plain)
         }
+        rows.row("Rescan Local Music", "rescan", "refresh", "scan", "local music", "library") {
+            Button {
+                Task { await LocalLibrary.shared.rescan() }
+            } label: {
+                SettingsLine(
+                    glyph: .localMusic,
+                    title: "Rescan Local Music",
+                    subtitle: "Scans local storage for new or modified songs"
+                ) {
+                    if LocalLibrary.shared.isScanning {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .scaledFont(size: 14, weight: .semibold)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(LocalLibrary.shared.isScanning)
+        }
         if localFolderName != nil {
             rows.row("Use All Audio Folders", "folders", "forget", "local music", "library") {
                 Button {

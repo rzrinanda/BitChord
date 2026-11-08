@@ -46,16 +46,36 @@ struct LocalMusicView: View {
                 TopBarLeadingItems()
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button {
-                        pickFolder()
+                        Task { await local.rescan() }
                     } label: {
-                        Image(systemName: "plus")
+                        Image(systemName: "arrow.clockwise")
+                            .scaledFont(size: 15, weight: .medium)
+                            .foregroundStyle(.primary)
+                            .frame(width: 34, height: 34)
+                            .toolbarChrome(in: Circle())
+                            .rotationEffect(.degrees(local.isScanning ? 360 : 0))
+                            .animation(local.isScanning ? .linear(duration: 1).repeatForever(autoreverses: false) : .default, value: local.isScanning)
+                    }
+                    .buttonStyle(ProfileCircleButtonStyle())
+                    .disabled(local.isScanning)
+                    .accessibilityLabel("Rescan local music")
+
+                    Menu {
+                        Button("Rescan Local Storage", systemImage: "arrow.clockwise") {
+                            Task { await local.rescan() }
+                        }
+                        Button("Choose Custom Folder…", systemImage: "folder") {
+                            pickFolder()
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
                             .scaledFont(size: 15, weight: .medium)
                             .foregroundStyle(.primary)
                             .frame(width: 34, height: 34)
                             .toolbarChrome(in: Circle())
                     }
                     .buttonStyle(ProfileCircleButtonStyle())
-                    .accessibilityLabel("Scan a folder")
+                    .accessibilityLabel("Local Music Options")
 
                     TopBarAccountButton()
                 }
@@ -63,16 +83,25 @@ struct LocalMusicView: View {
             #else
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        pickFolder()
-                    } label: {
-                        Image(.bchPlus)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 15)
+                    HStack(spacing: 8) {
+                        Button {
+                            Task { await local.rescan() }
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .rotationEffect(.degrees(local.isScanning ? 360 : 0))
+                                .animation(local.isScanning ? .linear(duration: 1).repeatForever(autoreverses: false) : .default, value: local.isScanning)
+                        }
+                        .help("Rescan local music")
+                        .disabled(local.isScanning)
+
+                        Button {
+                            pickFolder()
+                        } label: {
+                            Image(systemName: "folder.badge.plus")
+                        }
+                        .help("Choose custom folder")
+                        .accessibilityLabel("Choose Custom Folder")
                     }
-                    .help("Scan a folder")
-                    .accessibilityLabel("Scan a Folder")
                 }
             }
             #endif
@@ -135,20 +164,30 @@ struct LocalSongsBrowser: View {
 
     @ViewBuilder
     var body: some View {
-        if !local.scanned {
+        if local.isScanning && local.tracks.isEmpty {
+            VStack(spacing: 16) {
+                ProgressView()
+                    .controlSize(.large)
+                Text("Scanning local storage for music…")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.top, 60)
+        } else if !local.scanned {
             EmptyStateView(
                 icon: Image(.bchLibrary),
                 title: "Scan your music",
-                subtitle: "Pick a folder — BitChord reads its tags, artwork and plays it with gapless and crossfade.",
-                buttonTitle: "Choose Folder"
-            ) { onPickFolder() }
+                subtitle: "BitChord automatically discovers audio files in your device's local storage.",
+                buttonTitle: "Scan Music"
+            ) { Task { await local.rescan() } }
         } else if local.tracks.isEmpty {
             EmptyStateView(
                 icon: Image(.bchMusicNote),
-                title: "No audio files here",
-                subtitle: "The folder you selected didn't contain any supported audio files.",
-                buttonTitle: "Choose Another Folder"
-            ) { onPickFolder() }
+                title: "No audio files found",
+                subtitle: "Place audio files into BitChord in the Files app or your Music folder, then tap Rescan.",
+                buttonTitle: "Rescan Music"
+            ) { Task { await local.rescan() } }
         } else {
             VStack(spacing: 0) {
                 songsToolbar
@@ -205,6 +244,7 @@ struct LocalSongsBrowser: View {
                     }
                 }
                 .listStyle(.plain)
+                .refreshable { await local.rescan() }
             case .grid:
                 ScrollView {
                     LazyVGrid(
@@ -221,6 +261,7 @@ struct LocalSongsBrowser: View {
                     .padding(.horizontal, 24)
                     .padding(.vertical, 12)
                 }
+                .refreshable { await local.rescan() }
             }
         }
     }
@@ -310,20 +351,30 @@ struct LocalAlbumGrid: View {
 
     @ViewBuilder
     var body: some View {
-        if !local.scanned {
+        if local.isScanning && local.tracks.isEmpty {
+            VStack(spacing: 16) {
+                ProgressView()
+                    .controlSize(.large)
+                Text("Scanning local storage for music…")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.top, 60)
+        } else if !local.scanned {
             EmptyStateView(
                 icon: Image(.bchLibrary),
                 title: "Scan your music",
-                subtitle: "Pick a folder — BitChord reads its tags, artwork and plays it with gapless and crossfade.",
-                buttonTitle: "Choose Folder"
-            ) { onPickFolder() }
+                subtitle: "BitChord automatically discovers audio files in your device's local storage.",
+                buttonTitle: "Scan Music"
+            ) { Task { await local.rescan() } }
         } else if local.albumGroups.isEmpty {
             EmptyStateView(
                 icon: Image(.bchLibrary),
                 title: "No albums yet",
-                subtitle: "Albums group themselves once a folder with tagged music is scanned.",
-                buttonTitle: "Choose Folder"
-            ) { onPickFolder() }
+                subtitle: "Albums group themselves once audio files with metadata are scanned.",
+                buttonTitle: "Rescan Music"
+            ) { Task { await local.rescan() } }
         } else {
             ScrollView {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 18)], spacing: 22) {
@@ -333,6 +384,7 @@ struct LocalAlbumGrid: View {
                 }
                 .padding(20)
             }
+            .refreshable { await local.rescan() }
         }
     }
 }
@@ -371,20 +423,30 @@ struct LocalArtistList: View {
 
     @ViewBuilder
     var body: some View {
-        if !local.scanned {
+        if local.isScanning && local.tracks.isEmpty {
+            VStack(spacing: 16) {
+                ProgressView()
+                    .controlSize(.large)
+                Text("Scanning local storage for music…")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.top, 60)
+        } else if !local.scanned {
             EmptyStateView(
                 icon: Image(.bchLibrary),
                 title: "Scan your music",
-                subtitle: "Pick a folder — BitChord reads its tags, artwork and plays it with gapless and crossfade.",
-                buttonTitle: "Choose Folder"
-            ) { onPickFolder() }
+                subtitle: "BitChord automatically discovers audio files in your device's local storage.",
+                buttonTitle: "Scan Music"
+            ) { Task { await local.rescan() } }
         } else if local.artistGroups.isEmpty {
             EmptyStateView(
                 icon: Image(.bchLibrary),
                 title: "No artists yet",
-                subtitle: "Artists group themselves once a folder with tagged music is scanned.",
-                buttonTitle: "Choose Folder"
-            ) { onPickFolder() }
+                subtitle: "Artists group themselves once audio files with metadata are scanned.",
+                buttonTitle: "Rescan Music"
+            ) { Task { await local.rescan() } }
         } else {
             List {
                 ForEach(local.artistGroups, id: \.name) { group in
@@ -393,6 +455,7 @@ struct LocalArtistList: View {
                 }
             }
             .listStyle(.plain)
+            .refreshable { await local.rescan() }
         }
     }
 }
