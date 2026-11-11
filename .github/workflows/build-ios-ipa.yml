@@ -1,0 +1,73 @@
+name: Build Unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'App version (from AppleApp/project.yml)'
+        required: false
+        default: '1.0.4'
+  push:
+    branches:
+      - main
+    paths:
+      - 'AppleApp/**'
+      - 'shared/**'
+      - 'native-core/**'
+      - 'scripts/package-ios-ipa.sh'
+      - 'scripts/build-shared-framework.sh'
+      - 'scripts/build-native-core.sh'
+      - '.github/workflows/build-ios-ipa.yml'
+
+jobs:
+  build-ipa:
+    name: Build Unsigned IPA (macOS Apple Silicon)
+    runs-on: macos-15
+    steps:
+      - name: Checkout repository with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Install Rust & iOS targets
+        run: |
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim aarch64-apple-darwin
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+
+      - name: Build Shared KMP Framework (Release)
+        run: |
+          CONFIG=release ./scripts/build-shared-framework.sh
+
+      - name: Build Native Core Framework (Rust)
+        run: |
+          ./scripts/build-native-core.sh
+
+      - name: Generate Xcode Project
+        run: |
+          xcodegen generate --spec AppleApp/project.yml
+
+      - name: Package Unsigned iOS IPA
+        run: |
+          VERSION="${{ github.event.inputs.version || '1.0.4' }}"
+          ./scripts/package-ios-ipa.sh "$VERSION" --output-dir build/release --overwrite
+
+      - name: Upload Unsigned IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BitChord-iOS-Unsigned-IPA
+          path: build/release/*.ipa
+          if-no-files-found: error
+          retention-days: 30
