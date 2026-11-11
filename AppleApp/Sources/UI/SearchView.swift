@@ -1267,6 +1267,9 @@ struct SearchView: View {
             // go — the same context the YouTube song rows use.
             controller.play(addonHits.map { $0.asEntry() }, at: index, context: "Search")
         }
+        #if os(macOS)
+        .allowsWindowActivationEvents(true)
+        #endif
         .songContextMenu(entry)
         #if os(iOS)
         .swipeActions(edge: .leading) {
